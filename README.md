@@ -605,6 +605,8 @@ standalone script under `impl/` with per-engine install notes.
   - Minor: remove prepackaged `settings.yaml` and `chatrooms.yaml` (#113)
   - Minor: `personas.yaml` -> `personas.yaml.example` and untrack `personas.yaml` (#119)
   - Add "reset to defaults" button on TTS server settings (#121)
+- **Work in progress - release date goes here when ready** v7.2
+  - TODO release notes for 7.2 release go here
 
 ## License
 
