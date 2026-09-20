@@ -43,7 +43,7 @@ deactivate
 | `Personas/` (one directory per persona) | Persona definitions — the single source of truth. See **Persona storage** below |
 | `personas.yaml` | **Legacy only** (pre-directory user data). If present (and no `Personas/` dir), it is migrated to directories once at startup, then renamed to `personas.yaml.bak` and ignored forever. Takes precedence over the example template. Not tracked in git |
 | `personas.yaml.example` | **Tracked template** holding the two stock example personas (Alex, Luna). When no `Personas/` dir exists at startup, it is seeded into the directory — read-only: never renamed, modified, or deleted (no `.bak`) |
-| `chatrooms.yaml` | Chat room groupings (may not exist; code handles gracefully) |
+| `chatrooms.yaml` | Chat room groupings + the `default` room's echo chamber flag (`default_echo_chamber`, top-level key, default false) (may not exist; code handles gracefully) |
 
 All three are loaded once at startup and cached as module-level globals in `app/config.py`.
 In request handlers, **always use** `get_settings()`, `get_personas()`, `get_chatrooms()` — never call `load_*()` directly.
@@ -123,7 +123,7 @@ The request body includes `chat_room` (which room to persist to) and `message_id
 **Message IDs.** Both `start` and `done` carry `message_id` (server-generated UUID for that persona's assistant message); `start` also carries `user_message_id` (the frontend's ID, echoed back).
 `start` carries the assistant ID first **on purpose**: the frontend stamps it onto streaming TTS items at enqueue time, so the ID must be generated *before* the `start` event is emitted — moving it back after the stream reintroduces cross-turn audio misattribution.
 
-**Echo chamber.** Each room has an `echo_chamber` flag (set via `PUT /api/chatrooms/{name}/echo-chamber`, toggled in the room editor; the `default` room cannot be modified). When enabled for the active room, the LLM is bypassed entirely: exactly one persona (picked per the normal selection mode) echoes the user's message verbatim as a single `token` event, and `max_persona_replies` is forced to 1.
+**Echo chamber.** Each room has an `echo_chamber` flag (set via `PUT /api/chatrooms/{name}/echo-chamber`, toggled by the left-panel checkbox — including the `default` room, which is synthesized and therefore stores its flag in the top-level `default_echo_chamber` key of `chatrooms.yaml` rather than in a room record). The chat flow reads the flag through `room_echo_enabled()` in `app/config.py`, the single source of truth for both the default and named rooms. When enabled for the active room, the LLM is bypassed entirely: exactly one persona (picked per the normal selection mode) echoes the user's message verbatim as a single `token` event, and `max_persona_replies` is forced to 1.
 
 **Tool calls.** `tool_call` is only emitted while a tool-enabled persona's agentic loop is running, and only when `general.show_tool_calls` is true (the server suppresses the event, not the frontend); payload: `{type, persona, tool_name, arguments, result, failed}`. `failed` is a server-computed boolean (tool error, unknown tool, or unparseable/truncated arguments) — the frontend styles the chip from it, not by sniffing the result string. Tool calls whose arguments are not valid JSON (typically truncated at `max_tokens`) are never executed; the LLM receives an `Error: ...` result and can retry. The agentic loop is capped at `mcp.max_tool_iterations` rounds (default 8) per persona reply.
 
@@ -165,7 +165,7 @@ Both TTS and STT capture audio and persist it to the current room via `persisten
 
 Chat rooms are stored in `chatrooms.yaml` and managed via `get_chatrooms()` / `save_chatrooms()` in `app/config.py`.
 
-- The implicit **`"default"` room** always exists and always contains all configured personas. It cannot be created, modified, or deleted (the API rejects attempts with 400/409), and `GET /api/chatrooms/all` / `GET /api/chatrooms/default` synthesize it on the fly from the persona list.
+- The implicit **`"default"` room** always exists and always contains all configured personas. It cannot be created, persona-assigned, or deleted (the API rejects attempts with 400/409), and `GET /api/chatrooms/all` / `GET /api/chatrooms/default` synthesize it on the fly from the persona list. Its one modifiable property is the echo chamber flag: `PUT /api/chatrooms/default/echo-chamber` persists it in the top-level `default_echo_chamber` key of `chatrooms.yaml` (the room itself has no record there), and every config-rebuilding endpoint (room create/delete, persona assignment, persona rename/delete cascades) must carry the flag over — any rebuild of the room list goes through `ChatRoomsConfig.with_rooms()`, which preserves `default_echo_chamber` (constructing `ChatRoomsConfig(chat_rooms=...)` directly drops it).
 - Room names match case-insensitively and may only contain letters, numbers, spaces, hyphens, and underscores; creating a duplicate (or the reserved name `default`) is rejected with 409.
 - New rooms start with zero personas assigned; assigning a nonexistent persona returns 422.
 - Switching rooms loads persisted history from disk into the session rather than clearing it.
@@ -190,7 +190,7 @@ Chat rooms are stored in `chatrooms.yaml` and managed via `get_chatrooms()` / `s
 | `DELETE` | `/api/chatrooms/{name}` | Delete a chat room (also deletes its persistence directory; resets the session to "default" when it was the active room) |
 | `PUT` | `/api/chatrooms/{name}/personas` | Add personas to a room |
 | `DELETE` | `/api/chatrooms/{name}/personas/{persona_name}` | Remove a persona from a room |
-| `PUT` | `/api/chatrooms/{name}/echo-chamber` | Set/clear the room's echo chamber flag |
+| `PUT` | `/api/chatrooms/{name}/echo-chamber` | Set/clear the room's echo chamber flag (works for "default" too — stored in `default_echo_chamber`) |
 | `GET` | `/api/session` | Get current session state (history + active personas + current room) |
 | `POST` | `/api/session/new` | Clear history and reset session (also clears persisted files) |
 | `POST` | `/api/session/personas` | Update active personas for the session |

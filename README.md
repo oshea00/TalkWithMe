@@ -329,6 +329,9 @@ chat_rooms:
   persona_names:
   - kstew
   echo_chamber: true
+# The implicit "default" room (all personas) has no entry in chat_rooms;
+# its echo chamber flag lives in this top-level key instead.
+default_echo_chamber: false
 ```
 
 Personas can be added/removed to a chat room via the main chat interface's left panel:
@@ -476,6 +479,10 @@ Enabling the "echo chamber" option in a chat room will cause the responding pers
 whatever you type or speak, verbatim. This is useful with TTS servers, if you want to hear a persona
 speak a specific line of dialogue. This option is disabled by default.
 
+The checkbox works in every chat room, including the implicit "default" room. Because that room is not
+stored in `chatrooms.yaml`, its flag is persisted in the top-level `default_echo_chamber` key of the
+file (see the example above) rather than on a room entry.
+
 ## Logging
 
 TalkWithMe logs to the console — the terminal where uvicorn is running. By default it runs at
@@ -606,7 +613,8 @@ standalone script under `impl/` with per-engine install notes.
   - Minor: `personas.yaml` -> `personas.yaml.example` and untrack `personas.yaml` (#119)
   - Add "reset to defaults" button on TTS server settings (#121)
 - **Work in progress - release date goes here when ready** v7.2
-  - TODO release notes for 7.2 release go here
+  - Enable "echo chamber" option in default chat room (#125)
+  - Bug fix: persona rename/delete no longer resets "echo chamber" across chatrooms (#125)
 
 ## License
 

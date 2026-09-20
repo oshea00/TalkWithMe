@@ -14,7 +14,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.config import get_chatrooms, get_personas, get_settings
+from app.config import get_chatrooms, get_personas, get_settings, room_echo_enabled
 from app.models import ChatRequest
 from app.session import session
 from app.services import builtin, persona_store
@@ -231,13 +231,10 @@ async def _chat_stream(req: ChatRequest) -> AsyncIterator[str]:
     # Add user message to history (persisted automatically)
     session.add_user_message(req.message, user_message_id)
 
-    # Check if echo chamber is enabled for this room (case-insensitive lookup)
-    chatrooms_config = get_chatrooms()
-    room = next(
-        (r for r in chatrooms_config.chat_rooms if r.name.lower() == req.chat_room.lower()),
-        None,
-    )
-    echo_enabled = room.echo_chamber if room else False
+    # Check if echo chamber is enabled for this room (case-insensitive
+    # lookup; the "default" room's flag lives in the config, not in a
+    # room record — room_echo_enabled() knows about that).
+    echo_enabled = room_echo_enabled(get_chatrooms(), req.chat_room)
 
     # Echo chamber overrides max_replies — only one persona echoes the user.
     # Multiple identical echoes from different personas would be pointless noise.

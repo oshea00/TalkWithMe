@@ -322,7 +322,44 @@ class ChatRoom(BaseModel):
 
 
 class ChatRoomsConfig(BaseModel):
+    """The persisted chat-room configuration (chatrooms.yaml)."""
     chat_rooms: List[ChatRoom] = Field(default_factory=list)
+    # Echo-chamber flag for the implicit "default" room. That room is
+    # synthesized on the fly (it always contains every persona) and never
+    # gets a record in chat_rooms, so its flag has no per-room home — it
+    # lives here, next to the rooms it governs. Absent in the YAML = False.
+    default_echo_chamber: bool = False
+
+    def with_rooms(self, rooms: List["ChatRoom"]) -> "ChatRoomsConfig":
+        """A copy holding the given rooms, with the default-room flag intact.
+
+        Every mutation endpoint rebuilds this config from a new room list.
+        Routing all of them through this helper is what keeps
+        default_echo_chamber from being silently dropped on every room
+        create/delete/assignment (a config-rebuild footgun this project
+        has already tripped over once, with general settings).
+        """
+        return ChatRoomsConfig(
+            chat_rooms=list(rooms),
+            default_echo_chamber=self.default_echo_chamber,
+        )
+
+
+def room_echo_enabled(config: ChatRoomsConfig, room_name: str) -> bool:
+    """True when the named room has its echo chamber enabled.
+
+    Single source of truth for the flag, so the chat flow and the API
+    cannot drift apart. Case-insensitive. The implicit "default" room is
+    read from the config-level flag; a name not in the config is simply
+    off (the chat flow may receive any name from the request).
+    """
+    if room_name.lower() == "default":
+        return config.default_echo_chamber
+    room = next(
+        (r for r in config.chat_rooms if r.name.lower() == room_name.lower()),
+        None,
+    )
+    return room.echo_chamber if room else False
 
 
 # ---------------------------------------------------------------------------
@@ -503,7 +540,10 @@ def load_chatrooms(path: Optional[Path] = None) -> ChatRoomsConfig:
     with open(target) as f:
         raw = yaml.safe_load(f) or {}
     _chatrooms_cache = ChatRoomsConfig(
-        chat_rooms=[ChatRoom(**cr) for cr in raw.get("chat_rooms", [])]
+        chat_rooms=[ChatRoom(**cr) for cr in raw.get("chat_rooms", [])],
+        # A bare key ("default_echo_chamber:") is YAML null — treat it as
+        # off rather than crashing, same convention as global_system_prompt.
+        default_echo_chamber=raw.get("default_echo_chamber") or False,
     )
     return _chatrooms_cache
 
@@ -516,7 +556,11 @@ def save_chatrooms(config: ChatRoomsConfig, path: Optional[Path] = None) -> None
         "chat_rooms": [
             cr.model_dump(exclude_none=False)
             for cr in config.chat_rooms
-        ]
+        ],
+        # Written unconditionally (even when false) so the file is an
+        # explicit statement of state, matching how save_settings()
+        # serializes every field.
+        "default_echo_chamber": config.default_echo_chamber,
     }
     with open(target, "w") as f:
         yaml.dump(raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
