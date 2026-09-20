@@ -376,7 +376,7 @@ class TestMultiPersonaReplies:
 class TestEchoChamber:
     def test_echoes_user_message_verbatim_without_llm(self, client, monkeypatch):
         _patch_chatrooms(monkeypatch,
-                         [ChatRoom(name="Echo", persona_names=["Alex"], echo_chamber=True)])
+                          [ChatRoom(name="Echo", persona_names=["Alex"], echo_chamber=True)])
         _patch_general(monkeypatch, max_persona_replies=4)  # must be overridden to 1
 
         def fail(*a, **kw):
@@ -392,6 +392,42 @@ class TestEchoChamber:
         assert done["text"] == "hello there"
         # Exactly one persona responds, even though max_persona_replies is 4.
         assert [e["persona"] for e in sse_events_by_type(events, "start")] == ["Alex"]
+
+    def test_echo_enabled_on_default_room_bypasses_llm(self, client, monkeypatch):
+        # The default room has no record in chat_rooms; its flag lives in
+        # the config (default_echo_chamber). The chat flow must read it
+        # from there, not only from per-room records.
+        config = make_chatrooms()
+        config.default_echo_chamber = True
+        monkeypatch.setattr(app_config, "_chatrooms_cache", config)
+        _patch_general(monkeypatch, max_persona_replies=4)  # must be overridden to 1
+
+        def fail(*a, **kw):
+            raise AssertionError("echo chamber must bypass the LLM entirely")
+
+        monkeypatch.setattr(chat_router, "stream_chat", fail)
+
+        events = _chat(client, who_answers="Alex", chat_room="default")
+
+        tokens = sse_events_by_type(events, "token")
+        assert [t["token"] for t in tokens] == ["hello there"]
+        done = sse_events_by_type(events, "done")[0]
+        assert done["text"] == "hello there"
+        # Exactly one persona responds, even though max_persona_replies is 4.
+        assert [e["persona"] for e in sse_events_by_type(events, "start")] == ["Alex"]
+
+    def test_default_room_with_flag_off_streams_from_llm(self, client, monkeypatch):
+        # Regression guard: a config with the flag explicitly False (how
+        # pre-flag files load) must NOT echo — the normal LLM path runs.
+        config = make_chatrooms()
+        config.default_echo_chamber = False
+        monkeypatch.setattr(app_config, "_chatrooms_cache", config)
+        _stub_stream(monkeypatch, ["normal reply"])
+
+        events = _chat(client, who_answers="Alex", chat_room="default")
+
+        tokens = sse_events_by_type(events, "token")
+        assert [t["token"] for t in tokens] == ["normal reply"]
 
 
 # ---------------------------------------------------------------------------
