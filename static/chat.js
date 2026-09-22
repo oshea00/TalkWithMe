@@ -98,7 +98,7 @@ async function sendMessage() {
     // Generate a UUID for this user message (used for audio association).
     // If STT already generated one (for audio upload), reuse it.
     if (!pendingUserMessageId) {
-        pendingUserMessageId = crypto.randomUUID();
+        pendingUserMessageId = generateUUID();
     }
 
     // Append user bubble with the message ID

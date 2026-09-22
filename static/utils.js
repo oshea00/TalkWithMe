@@ -48,6 +48,24 @@ function comparePersonasByName(a, b) {
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 }
 
+/**
+ * Generate an RFC 4122 version-4 UUID string.
+ *
+ * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
+ * When the app is opened over plain http:// from another machine on the
+ * LAN it is undefined, and calling it threw before sendMessage() could
+ * send anything. crypto.getRandomValues() is available in every context,
+ * so it backs the fallback.
+ */
+function generateUUID() {
+    if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** Escape HTML special characters to prevent XSS in dynamically rendered text. */
 function escapeHtml(str) {
     if (typeof str !== 'string') return str;

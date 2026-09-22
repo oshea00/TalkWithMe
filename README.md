@@ -71,6 +71,9 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Open `http://localhost:8000` in your browser.
 
+Opening the UI from a different machine on your network? Chat works over plain `http://`, but
+the microphone (STT) needs HTTPS — see [Accessing from another machine](#accessing-from-another-machine-https).
+
 ## Configuration
 
 Most settings can be changed in the UI. Behind the scenes, configuration is stored on disk:
@@ -507,6 +510,60 @@ often a model/prompt issue rather than an app issue).
 - Invalid values (e.g. `TALKWITHME_LOG_LEVEL=verbose`) log a warning at startup and fall back to
   INFO — a typo never prevents the app from starting.
 - The variable is unset or blank means INFO.
+
+## Accessing from another machine (HTTPS)
+
+The Quick start command listens on all interfaces (`--host 0.0.0.0`), so you can open the UI from
+another computer on your network at `http://<server-ip>:8000`. Text chat and TTS playback work
+fine that way. The **microphone does not**: browsers only allow microphone access on secure
+pages, meaning `https://` or `http://localhost`. On a plain `http://<server-ip>` page the browser
+hides the microphone API entirely, so there is no permission prompt, and the app reports
+"Microphone access was denied."
+
+To use STT from another machine, serve TalkWithMe over HTTPS. uvicorn can do this directly with
+a self-signed certificate.
+
+**1. Create a certificate.** Keep it outside the project directory so it can never be
+committed. List every address you will type into the browser in `subjectAltName`, because
+browsers check the address against that list. The values below are examples: replace
+`192.168.1.50` with your server's IP and `myserver` with its hostname.
+
+```bash
+mkdir -p ~/.talkwithme-certs && chmod 700 ~/.talkwithme-certs
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+  -keyout ~/.talkwithme-certs/key.pem -out ~/.talkwithme-certs/cert.pem \
+  -subj "/CN=192.168.1.50" \
+  -addext "subjectAltName=IP:192.168.1.50,DNS:myserver,IP:127.0.0.1,DNS:localhost"
+chmod 600 ~/.talkwithme-certs/key.pem
+```
+
+**2. Start TalkWithMe with TLS:**
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload \
+  --ssl-keyfile ~/.talkwithme-certs/key.pem --ssl-certfile ~/.talkwithme-certs/cert.pem
+```
+
+**3. Open `https://<server-ip>:8000`.** On the first visit the browser warns that the
+certificate is self-signed. Accept it (Chrome: *Advanced → Proceed*; Firefox: *Accept the Risk
+and Continue*). Then click the microphone button and allow access when prompted.
+
+### Notes and gotchas
+
+- The port now only accepts HTTPS: `http://<server-ip>:8000` stops working until you restart
+  without the `--ssl-*` flags.
+- Your LLM, TTS, and STT `base_url` settings do **not** need to change, even if those servers use
+  plain `http://`. The browser only talks to TalkWithMe, and TalkWithMe's backend calls those
+  servers, so there is no mixed-content problem.
+- To get rid of the certificate warning, import `cert.pem` (never `key.pem`) as a trusted root
+  certificate on each client machine. Firefox keeps its own list, under *Settings → Privacy &
+  Security → Certificates*.
+- The certificate above expires after 825 days. Rerun the `openssl` command to renew it (or
+  when the server's IP address or hostname changes), then restart uvicorn.
+- If you'd rather not set up HTTPS, there are two alternatives. An SSH tunnel
+  (`ssh -L 8000:localhost:8000 <user>@<server-ip>`, then open `http://localhost:8000`) works
+  because browsers treat `localhost` as secure. Or, in Chrome only, add the
+  `http://<server-ip>:8000` origin at `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
 
 ## Detailed setup guide
 
