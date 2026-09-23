@@ -16,5 +16,6 @@ testsetup.sh
 restore.sh
 .venv/
 startup.sh
+startui.sh
 llm_api_key
 
