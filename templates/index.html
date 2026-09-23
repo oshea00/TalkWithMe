@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>TalkWithMe v7.1</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
@@ -17,21 +17,27 @@
         <header id="topbar">
             <h1>TalkWithMe v7.1</h1>
             <div class="topbar-actions">
-                <label for="theme-select" class="theme-label">Theme</label>
-                <select id="theme-select" title="Choose color theme">
-                    <option value="dark" selected>Dark</option>
-                    <option value="light">Light</option>
-                    <option value="matrix">Matrix</option>
-                    <option value="blues">Blues</option>
-                </select>
-                <button id="btn-persona-editor" title="Open persona editor">&#9998; Personas</button>
-                <button id="btn-chat-rooms" title="Manage chat rooms">&#127970; Chat Rooms</button>
-                <button id="btn-gen-settings" title="Open settings">&#9881; Settings</button>
-                <button id="btn-settings" title="Open server configuration">&#128268; Servers</button>
-                <button id="btn-new-chat" title="Start a new chat">New Chat</button>
+                <!-- Admin controls. Inline on desktop; on narrow screens they
+                     collapse into a dropdown behind #btn-menu (see the mobile
+                     media query in style.css) so the chat stays the focus. -->
+                <div id="topbar-menu" class="topbar-menu">
+                    <label for="theme-select" class="theme-label">Theme</label>
+                    <select id="theme-select" title="Choose color theme">
+                        <option value="dark" selected>Dark</option>
+                        <option value="light">Light</option>
+                        <option value="matrix">Matrix</option>
+                        <option value="blues">Blues</option>
+                    </select>
+                    <button id="btn-persona-editor" title="Open persona editor">&#9998; Personas</button>
+                    <button id="btn-chat-rooms" title="Manage chat rooms">&#127970; Chat Rooms</button>
+                    <button id="btn-gen-settings" title="Open settings">&#9881; Settings</button>
+                    <button id="btn-settings" title="Open server configuration">&#128268; Servers</button>
+                    <button id="btn-new-chat" title="Start a new chat">New Chat</button>
+                </div>
                 <button id="btn-tts-toggle" title="Toggle TTS playback" class="icon-btn">
                     <span id="tts-icon">&#128266;</span>
                 </button>
+                <button id="btn-menu" type="button" class="icon-btn" title="Menu" aria-label="Menu" aria-controls="topbar-menu" aria-expanded="false">&#9776;</button>
             </div>
         </header>
 
@@ -87,7 +93,7 @@
                         placeholder="Type your message..."
                         rows="1"
                     ></textarea>
-<button id="btn-mic" type="button" aria-label="Record voice message" title="Record voice message" class="icon-btn">&#127908;</button>
+                    <button id="btn-mic" type="button" aria-label="Record voice message" title="Record voice message" class="icon-btn">&#127908;</button>
                     <button id="btn-send" title="Send message">&#9654;</button>
                 </div>
             </main>
@@ -416,6 +422,7 @@
                                 <input id="gsf-persona-name-mentions" type="checkbox">
                                 <span>Auto-select persona on name mention</span>
                             </label>
+                            <span class="field-hint">With "LLM decides" or "Surprise me", mentioning a persona by name sends that message to them. Never overrides "Selected persona".</span>
                         </div>
                         <div class="form-row">
                             <label class="settings-checkbox-label">

@@ -25,6 +25,27 @@ function updateTTSToggleUI() {
     }
 }
 
+/**
+ * Create / resume the shared AudioContext. Must be called from inside a
+ * user gesture (tap, click, keypress): mobile browsers (iOS Safari, Chrome
+ * on Android) leave a context created outside a gesture suspended, so TTS
+ * that first arrives after an async fetch would otherwise play silently.
+ */
+function unlockAudio() {
+    try {
+        if (!audioCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            audioCtx = new Ctx();
+        }
+        if (audioCtx.state === "suspended") {
+            audioCtx.resume().catch(() => {});
+        }
+    } catch (err) {
+        console.warn("Unable to unlock audio:", err);
+    }
+}
+
 function toggleTTS() {
     if (!ttsAvailable) return;
     ttsEnabled = !ttsEnabled;

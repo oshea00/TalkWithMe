@@ -139,8 +139,19 @@ function renderPersonaList(list, showRemoveButtons) {
 
 function highlightSelectedPersona() {
     document.querySelectorAll(".persona-card").forEach(card => {
-        card.classList.toggle("selected", card.dataset.name === selectedPersona);
+        const isSelected = card.dataset.name === selectedPersona;
+        card.classList.toggle("selected", isSelected);
+        // Mobile: the persona list is a horizontal strip, so a selection made
+        // elsewhere (name mention, router pick) may be scrolled off-screen.
+        if (isSelected && isMobileLayout() && typeof card.scrollIntoView === "function") {
+            card.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
     });
+}
+
+function isMobileLayout() {
+    return typeof window !== "undefined" && !!window.matchMedia
+        && window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
 }
 
 /* ==========================================================================

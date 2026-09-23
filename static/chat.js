@@ -58,6 +58,30 @@ function getWhoAnswers() {
     return chosen;
 }
 
+/**
+ * Decide who answers `text`, applying persona-name mention detection.
+ *
+ * "Selected persona" always wins: mentioning another persona ("what does
+ * Spock think?") must never re-route the message away from the persona the
+ * user deliberately selected. In "LLM decides" / "Surprise me" mode a
+ * mention routes THIS message to the mentioned persona, but leaves the
+ * chooser mode untouched so later messages go back to routing / random.
+ * Mention detection can be turned off entirely via
+ * general.persona_name_mentions.
+ */
+function resolveWhoAnswers(text, roomPersonaNames) {
+    const chosen = document.querySelector('input[name="who_answers"]:checked').value;
+    if (chosen !== "selected" && personaNameMentionsEnabled) {
+        const mentioned = detectMentionedPersona(text, roomPersonaNames);
+        if (mentioned) {
+            selectedPersona = mentioned;
+            highlightSelectedPersona();
+            return mentioned;
+        }
+    }
+    return getWhoAnswers();
+}
+
 /* ==========================================================================
    Send message
    ========================================================================== */
@@ -73,22 +97,9 @@ async function sendMessage() {
         return;
     }
 
-    // Auto-select a persona if the user mentioned one by name in their message.
-    // This runs before getWhoAnswers() so the "Selected persona" radio is
-    // already checked by the time we determine who should respond.
-    // Feature can be disabled via settings.yaml: general.persona_name_mentions
-    if (personaNameMentionsEnabled) {
-        const mentioned = detectMentionedPersona(text, roomPersonaNames);
-        if (mentioned) {
-            selectedPersona = mentioned;
-            highlightSelectedPersona();
-            const selectedRadio = document.querySelector('input[name="who_answers"][value="selected"]');
-            if (selectedRadio) {
-                selectedRadio.checked = true;
-                selectedRadio.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-        }
-    }
+    // Resolved before any UI changes: a name mention may route this message
+    // (but never overrides "Selected persona" — see resolveWhoAnswers()).
+    const who = resolveWhoAnswers(text, roomPersonaNames);
 
     // Clear empty state if present
     if (messagesEl.querySelector(".empty-state")) {
@@ -110,7 +121,6 @@ async function sendMessage() {
     sendBtn.disabled = true;
 
     // Create a placeholder assistant bubble for the first responder
-    const who = getWhoAnswers();
     currentAssistantRow = createAssistantBubble(who);
     messagesEl.appendChild(currentAssistantRow);
     scrollToBottom();
@@ -692,6 +702,9 @@ function appendPersistedAssistantBubble(msg, roomName) {
  */
 async function playPersistedAudio(roomName, filename) {
     const url = getAudioUrl(roomName, filename);
+    // Called from a play-button click: unlock before the await, while the
+    // browser still treats us as inside the user gesture (mobile Safari).
+    unlockAudio();
     try {
         const resp = await fetch(url);
         if (!resp.ok) {

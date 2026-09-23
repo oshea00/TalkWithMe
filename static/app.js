@@ -16,6 +16,7 @@
 
 async function init() {
     initTheme();
+    applyMobileDefaults();
     await loadPersonas(); // Also loads chat rooms internally
     await checkTTSHealth();
     await checkSTTHealth();
@@ -26,6 +27,17 @@ async function init() {
     // Load persisted history for the current room
     const history = await loadPersistedHistory(currentChatRoom);
     renderPersistedHistory(history.messages, currentChatRoom);
+}
+
+/**
+ * On a phone-sized screen the "Who should answer?" chooser is hidden and the
+ * persona strip is the only responder control, so default to "Selected
+ * persona": tapping an avatar is then all it takes to pick who answers.
+ */
+function applyMobileDefaults() {
+    if (!isMobileLayout()) return;
+    const selectedRadio = document.querySelector('input[name="who_answers"][value="selected"]');
+    if (selectedRadio) selectedRadio.checked = true;
 }
 
 /**
@@ -109,11 +121,15 @@ async function checkSTTHealth() {
    ========================================================================== */
 
 function setupEventListeners() {
-    sendBtn.addEventListener("click", sendMessage);
+    sendBtn.addEventListener("click", () => {
+        unlockAudio();
+        sendMessage();
+    });
     inputEl.addEventListener("keydown", (e) => {
         // Enter sends; Shift+Enter for newline
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
+            unlockAudio();
             sendMessage();
         }
     });
@@ -125,8 +141,15 @@ function setupEventListeners() {
     });
 
     newChatBtn.addEventListener("click", newChat);
-    ttsToggleBtn.addEventListener("click", toggleTTS);
-    micBtn.addEventListener("click", toggleMicrophone);
+    ttsToggleBtn.addEventListener("click", () => {
+        unlockAudio();
+        toggleTTS();
+    });
+    micBtn.addEventListener("click", () => {
+        unlockAudio();
+        toggleMicrophone();
+    });
+    setupTopbarMenu();
     themeSelectEl.addEventListener("change", () => {
         applyTheme(themeSelectEl.value, true);
     });
@@ -134,8 +157,41 @@ function setupEventListeners() {
     document.addEventListener("keydown", (e) => {
         if (e.ctrlKey && e.code === "Space" && !micBtn.disabled) {
             e.preventDefault();
+            unlockAudio();
             toggleMicrophone();
         }
+    });
+}
+
+/**
+ * Mobile topbar menu: the admin buttons live in #topbar-menu, which the
+ * mobile stylesheet shows only while #topbar has the "menu-open" class.
+ * On desktop the menu button is hidden and the class has no effect.
+ */
+function setupTopbarMenu() {
+    const topbar = document.getElementById("topbar");
+    const menuBtn = document.getElementById("btn-menu");
+    const menu = document.getElementById("topbar-menu");
+
+    const setOpen = (open) => {
+        topbar.classList.toggle("menu-open", open);
+        menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+
+    menuBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setOpen(!topbar.classList.contains("menu-open"));
+    });
+    // Picking an action (each opens a modal or resets the chat) closes the
+    // menu; the theme <select> keeps it open so themes can be previewed.
+    menu.addEventListener("click", (e) => {
+        if (e.target.closest("button")) setOpen(false);
+    });
+    document.addEventListener("click", (e) => {
+        if (!topbar.contains(e.target)) setOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") setOpen(false);
     });
 }
 

@@ -53,6 +53,9 @@ let currentAssistantRow = null; // The active assistant bubble row (updated on e
 
 const THEME_STORAGE_KEY = "talkwithme_theme";
 
+// Phone-sized layout breakpoint. Must match the mobile media query in style.css.
+const MOBILE_LAYOUT_QUERY = "(max-width: 768px)";
+
 /* ==========================================================================
    DOM References — grouped by the module that uses them
    ========================================================================== */

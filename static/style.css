@@ -137,6 +137,18 @@ html, body {
     border-color: var(--accent);
 }
 
+/* Admin controls wrapper: inline on desktop, a dropdown on mobile. */
+.topbar-menu {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* Menu toggle only exists on narrow screens (see the mobile media query). */
+#btn-menu {
+    display: none;
+}
+
 .theme-label {
     font-size: 0.8rem;
     color: var(--text-secondary);
@@ -1689,5 +1701,301 @@ html, body {
     /* Touch devices: no hover to reveal the button, so keep it visible. */
     .message-delete-btn:not(:disabled) {
         opacity: 1;
+    }
+}
+
+/* --------------------------------------------------------------------------
+   Mobile layout (phones / narrow windows)
+
+   The chat is the whole point on a phone: switching rooms, picking who
+   answers, TTS on/off, the mic and the text box. Everything else (persona
+   and room editors, settings, servers, theme, new chat) moves behind the
+   topbar menu button, and the sidebar collapses into a single strip —
+   room dropdown + a horizontally swipeable row of persona avatars.
+   "Who should answer?" defaults to "Selected persona" here (app.js), so
+   tapping an avatar is the one control needed to pick the responder.
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+    :root {
+        --topbar-height: 48px;
+    }
+
+    #app {
+        display: flex;
+        flex-direction: column;
+        /* dvh tracks the visible viewport as mobile browser chrome and the
+           on-screen keyboard come and go; vh is the fallback. */
+        height: 100vh;
+        height: 100dvh;
+    }
+
+    /* ---- Top bar ---- */
+    #topbar {
+        flex-shrink: 0;
+        padding: 0 12px;
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+    }
+
+    #topbar h1 {
+        font-size: 1.05rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .topbar-actions {
+        gap: 8px;
+    }
+
+    #btn-menu,
+    #btn-tts-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        height: 40px;
+    }
+
+    .topbar-menu {
+        display: none;
+        position: absolute;
+        top: 100%;
+        right: 8px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 10px;
+        min-width: 220px;
+        max-height: calc(100dvh - var(--topbar-height) - 16px);
+        overflow-y: auto;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    #topbar.menu-open .topbar-menu {
+        display: flex;
+    }
+
+    .topbar-menu button,
+    .topbar-menu #theme-select {
+        width: 100%;
+        min-height: 44px;
+        text-align: left;
+        font-size: 0.95rem;
+    }
+
+    .topbar-menu .theme-label {
+        padding: 2px 2px 0;
+    }
+
+    /* ---- Layout: strip on top, chat below ---- */
+    #main-layout {
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        height: auto;
+    }
+
+    /* ---- Sidebar → room + persona strip ---- */
+    #sidebar {
+        width: 100%;
+        min-width: 0;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        overflow: visible;
+        flex-shrink: 0;
+    }
+
+    #sidebar h3,
+    #who-chooser,
+    #echo-chamber-wrapper,
+    .btn-add-persona,
+    .persona-remove-btn {
+        display: none !important;
+    }
+
+    #chat-room-selector {
+        flex: 0 0 auto;
+        margin-bottom: 0;
+        max-width: 38vw;
+    }
+
+    #chat-room-dropdown {
+        min-height: 40px;
+        /* 16px keeps iOS Safari from zooming in when the control is focused. */
+        font-size: 16px;
+    }
+
+    #persona-list {
+        flex: 1;
+        min-width: 0;
+        flex-direction: row;
+        gap: 4px;
+        margin-top: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x proximity;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    #persona-list::-webkit-scrollbar {
+        display: none;
+    }
+
+    .persona-card {
+        flex: 0 0 auto;
+        flex-direction: column;
+        gap: 3px;
+        width: 64px;
+        padding: 4px 2px;
+        border: none;
+        border-radius: 8px;
+        scroll-snap-align: start;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .persona-card:hover {
+        background: transparent;
+    }
+
+    .persona-card.selected {
+        background: transparent;
+    }
+
+    .persona-card .persona-avatar {
+        width: 44px;
+        height: 44px;
+        font-size: 1.05rem;
+        overflow: visible;
+        box-shadow: 0 0 0 2px transparent;
+        transition: box-shadow 0.15s;
+    }
+
+    .persona-card.selected .persona-avatar {
+        box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px var(--accent);
+    }
+
+    .persona-card .persona-info {
+        width: 100%;
+        text-align: center;
+    }
+
+    .persona-card .persona-name {
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+    }
+
+    .persona-card.selected .persona-name {
+        color: var(--text-primary);
+        font-weight: 700;
+    }
+
+    .persona-card .persona-desc {
+        display: none;
+    }
+
+    /* ---- Chat panel ---- */
+    #chat-panel {
+        flex: 1;
+        min-height: 0;
+    }
+
+    #messages {
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .message-row {
+        max-width: 92%;
+    }
+
+    .message-row.assistant {
+        gap: 8px;
+    }
+
+    .bubble-avatar {
+        width: 40px;
+        height: 40px;
+        font-size: 1.05rem;
+    }
+
+    .empty-state {
+        padding: 24px 16px;
+    }
+
+    /* ---- Input bar: big touch targets, clear of the home indicator ---- */
+    #input-bar {
+        align-items: flex-end;
+        gap: 8px;
+        padding: 8px 10px;
+        padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+        flex-shrink: 0;
+    }
+
+    #message-input {
+        /* 16px keeps iOS Safari from zooming in when the textarea is focused. */
+        font-size: 16px;
+        min-height: 48px;
+        padding: 12px 14px;
+        border-radius: 24px;
+    }
+
+    #btn-mic,
+    #btn-send {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        font-size: 1.25rem !important;
+        padding: 0 !important;
+        touch-action: manipulation;
+    }
+
+    /* ---- Modals: full screen ---- */
+    .modal-overlay {
+        padding: 0;
+        align-items: stretch;
+    }
+
+    .modal-box,
+    .modal-box-sm {
+        max-width: none;
+        max-height: none;
+        height: 100%;
+        border-radius: 0;
+        border: none;
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* Small confirm dialogs stay as centered cards. */
+    #pe-confirm-overlay,
+    #cr-confirm-overlay {
+        padding: 16px;
+        align-items: center;
+    }
+
+    #pe-confirm-overlay .modal-box-sm,
+    #cr-confirm-overlay .modal-box-sm {
+        height: auto;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-color);
+    }
+
+    .form-row input,
+    .form-row textarea,
+    .form-row select {
+        font-size: 16px;
     }
 }
