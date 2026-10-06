@@ -16,6 +16,7 @@ the LLM produces a plain text answer.
 
 import json
 import logging
+import re
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional
 
@@ -66,14 +67,48 @@ def warn_if_plaintext_llm(base_url: Optional[str]) -> None:
     logger.warning("Warning: your LLM connection uses http; your chats are sent in cleartext.")
 
 
+# OpenAI reasoning models (o1/o3/o4-mini, the gpt-5 family) reject the
+# classic sampling params with a 400: `max_tokens` must be sent as
+# `max_completion_tokens`, and `temperature` accepts only the default (1).
+# An optional "provider/" prefix (OpenRouter-style ids) is tolerated.
+_REASONING_MODEL_RE = re.compile(r"^(?:[\w.-]+/)?(?:o\d|gpt-5)", re.IGNORECASE)
+
+# Reasoning effort sent to reasoning models. "low" is the one value every
+# reasoning model accepts ("minimal" is gpt-5-only, "none" gpt-5.1+), and it
+# keeps dialog latency down and leaves the token budget for the visible reply.
+_REASONING_EFFORT = "low"
+
+# Hidden reasoning tokens count against the completion budget, so a tiny
+# budget (the router's 16 tokens) is spent entirely on reasoning and the
+# visible answer comes back empty. Non-streaming calls to reasoning models
+# get at least this many tokens.
+_REASONING_MIN_COMPLETION_TOKENS = 1024
+
+
+def is_reasoning_model(model: Optional[str]) -> bool:
+    """True for OpenAI reasoning models that need the reasoning-model params."""
+    return bool(model) and bool(_REASONING_MODEL_RE.match(model.strip()))
+
+
+def _sampling_params(model: Optional[str], max_tokens: int, temperature: float) -> dict:
+    """Token-budget + sampling payload fields, shaped for the model family."""
+    if is_reasoning_model(model):
+        return {
+            "max_completion_tokens": max_tokens,
+            "reasoning_effort": _REASONING_EFFORT,
+        }
+    return {"max_tokens": max_tokens, "temperature": temperature}
+
+
 def _base_payload(messages: List[dict]) -> dict:
     """Common /v1/chat/completions payload fields (model, sampling, streaming)."""
     settings = get_settings()
     return {
         "model": settings.llm.model,
         "messages": messages,
-        "max_tokens": settings.llm.max_tokens,
-        "temperature": settings.llm.temperature,
+        **_sampling_params(
+            settings.llm.model, settings.llm.max_tokens, settings.llm.temperature
+        ),
         "stream": True,
     }
 
@@ -89,6 +124,13 @@ async def _iter_completion_chunks(payload: dict) -> AsyncGenerator[dict, None]:
 
     async with _llm_client(timeout=120.0) as client:
         async with client.stream("POST", url, json=payload) as resp:
+            if resp.is_error:
+                # The provider's error body says what it rejected (e.g. an
+                # unsupported parameter); raise_for_status() alone drops it.
+                await resp.aread()
+                logger.warning(
+                    "LLM returned HTTP %d: %s", resp.status_code, resp.text[:500]
+                )
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data: "):
@@ -126,20 +168,27 @@ async def chat_completion(messages: List[Dict[str, str]], max_tokens: int = 64) 
     settings = get_settings()
     url = f"{settings.llm.base_url}/v1/chat/completions"
 
+    model = settings.llm.model
+    if is_reasoning_model(model):
+        max_tokens = max(max_tokens, _REASONING_MIN_COMPLETION_TOKENS)
     payload = {
-        "model": settings.llm.model,
+        "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": 0.1,  # Low temperature for deterministic routing
+        # Low temperature for deterministic routing (ignored for reasoning models)
+        **_sampling_params(model, max_tokens, 0.1),
         "stream": False,
     }
 
     try:
         async with _llm_client(timeout=15.0) as client:
             resp = await client.post(url, json=payload)
+            if resp.is_error:
+                logger.warning(
+                    "LLM returned HTTP %d: %s", resp.status_code, resp.text[:500]
+                )
             resp.raise_for_status()
             body = resp.json()
-            return body["choices"][0]["message"]["content"]
+            return body["choices"][0]["message"]["content"] or ""
     except Exception as exc:
         logger.warning("LLM non-streaming call failed: %s", exc)
         return ""

@@ -17,6 +17,7 @@ from app.config import Persona
 from app.services import builtin
 from tests.factories import (
     FakeLLMClient,
+    LLMSettings,
     FakeStreamResponse,
     json_response,
     make_settings,
@@ -175,6 +176,99 @@ class TestChatCompletion:
         patch_llm_client(monkeypatch, Down([]))
         result = _run(llm.chat_completion([{"role": "user", "content": "pick"}]))
         assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# Reasoning models (o-series, gpt-5 family) — different sampling params
+# ---------------------------------------------------------------------------
+
+def _use_model(monkeypatch, model: str):
+    monkeypatch.setattr(
+        app_config,
+        "_settings_cache",
+        make_settings(llm=LLMSettings(base_url="http://llm.local:8080", model=model)),
+    )
+
+
+class TestReasoningModels:
+    """OpenAI reasoning models 400 on `max_tokens` and on any non-default
+    `temperature`; they need `max_completion_tokens` instead."""
+
+    @pytest.mark.parametrize("model", [
+        "gpt-5-mini", "gpt-5", "GPT-5.1", "gpt-5-nano-2025-08-07",
+        "o1", "o3-mini", "o4-mini", "openai/gpt-5-mini",
+    ])
+    def test_reasoning_models_detected(self, model):
+        assert llm.is_reasoning_model(model)
+
+    @pytest.mark.parametrize("model", [
+        "gpt-4.1", "gpt-4o", "gpt-4o-mini", "test-model", "llama-3.1-8b",
+        "qwen3-30b", "olmo-2", "", None,
+    ])
+    def test_classic_models_not_detected(self, model):
+        assert not llm.is_reasoning_model(model)
+
+    def test_stream_payload_for_reasoning_model(self, monkeypatch):
+        _use_model(monkeypatch, "gpt-5-mini")
+        client = FakeLLMClient([token_line("x"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat([{"role": "user", "content": "hi"}]))
+
+        payload = client.payloads[0]
+        assert payload["max_completion_tokens"] == 1024
+        assert payload["reasoning_effort"] == "low"
+        assert "max_tokens" not in payload
+        assert "temperature" not in payload
+
+    def test_tool_loop_payload_for_reasoning_model(self, monkeypatch, tmp_path):
+        _use_model(monkeypatch, "gpt-5-mini")
+        client = FakeLLMClient([token_line("x"), finish_line("stop"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat_with_tools(
+            [{"role": "user", "content": "hi"}], [], _tool_persona(tmp_path),
+        ))
+
+        payload = client.payloads[0]
+        assert "max_completion_tokens" in payload
+        assert "max_tokens" not in payload
+        assert "temperature" not in payload
+
+    def test_router_call_for_reasoning_model_gets_room_to_reason(self, monkeypatch):
+        # A 16-token budget is consumed entirely by hidden reasoning and the
+        # visible answer comes back empty — the router would silently fall
+        # back to random. The budget is raised for reasoning models.
+        _use_model(monkeypatch, "gpt-5-mini")
+        resp = json_response(200, {"choices": [{"message": {"content": "Luna"}}]})
+        client = FakeLLMClient([], post_response=resp)
+        patch_llm_client(monkeypatch, client)
+
+        result = _run(llm.chat_completion([{"role": "user", "content": "pick"}], max_tokens=16))
+
+        assert result == "Luna"
+        payload = client.payloads[0]
+        assert payload["max_completion_tokens"] >= 1024
+        assert "max_tokens" not in payload
+        assert "temperature" not in payload
+
+    def test_chat_completion_null_content_returns_empty_string(self, monkeypatch):
+        resp = json_response(200, {"choices": [{"message": {"content": None}}]})
+        patch_llm_client(monkeypatch, FakeLLMClient([], post_response=resp))
+        assert _run(llm.chat_completion([{"role": "user", "content": "pick"}])) == ""
+
+    def test_stream_error_body_is_logged(self, monkeypatch, caplog):
+        body = '{"error": {"message": "Unsupported parameter: \'max_tokens\'"}}'
+
+        class Rejecting(FakeLLMClient):
+            def stream(self, method, url, json=None):
+                return FakeStreamResponse([], status_code=400, text=body)
+
+        patch_llm_client(monkeypatch, Rejecting([]))
+        with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+            with pytest.raises(Exception, match="HTTP 400"):
+                _collect(llm.stream_chat([{"role": "user", "content": "hi"}]))
+        assert "Unsupported parameter" in caplog.text
 
 
 # ---------------------------------------------------------------------------

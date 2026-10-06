@@ -1077,9 +1077,17 @@ def sse_response(
 class FakeStreamResponse:
     """Mimics the context manager returned by httpx.AsyncClient.stream()."""
 
-    def __init__(self, lines: List[str], status_code: int = 200):
+    def __init__(self, lines: List[str], status_code: int = 200, text: str = ""):
         self._lines = lines
         self.status_code = status_code
+        self.text = text
+
+    @property
+    def is_error(self) -> bool:
+        return self.status_code >= 400
+
+    async def aread(self) -> bytes:
+        return self.text.encode("utf-8")
 
     def raise_for_status(self):
         if self.status_code >= 400:
