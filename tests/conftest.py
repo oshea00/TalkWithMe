@@ -61,6 +61,7 @@ def isolated_app_state(tmp_path, monkeypatch):
     # The once-per-URL cleartext warning dedupe in llm.py must not survive
     # a test boundary.
     llm_module._warned_plaintext_urls.clear()
+    llm_module._tools_unsupported_models.clear()
 
     # The global session singleton: start every test clean.
     global_session._history.clear()
@@ -74,6 +75,7 @@ def isolated_app_state(tmp_path, monkeypatch):
     tts_client.invalidate_capabilities()
     llm_auth.invalidate_llm_api_key()
     llm_module._warned_plaintext_urls.clear()
+    llm_module._tools_unsupported_models.clear()
     global_session._history.clear()
     global_session._active_personas.clear()
     global_session.set_current_room("default")

@@ -67,16 +67,26 @@ def warn_if_plaintext_llm(base_url: Optional[str]) -> None:
     logger.warning("Warning: your LLM connection uses http; your chats are sent in cleartext.")
 
 
-# OpenAI reasoning models (o1/o3/o4-mini, the gpt-5 family) reject the
+# OpenAI reasoning models (o1/o3/o4-mini, the gpt-5 and gpt-6 families) reject the
 # classic sampling params with a 400: `max_tokens` must be sent as
 # `max_completion_tokens`, and `temperature` accepts only the default (1).
 # An optional "provider/" prefix (OpenRouter-style ids) is tolerated.
-_REASONING_MODEL_RE = re.compile(r"^(?:[\w.-]+/)?(?:o\d|gpt-5)", re.IGNORECASE)
+_REASONING_MODEL_RE = re.compile(r"^(?:[\w.-]+/)?(?:o\d|gpt-[56])", re.IGNORECASE)
 
 # Reasoning effort sent to reasoning models. "low" is the one value every
-# reasoning model accepts ("minimal" is gpt-5-only, "none" gpt-5.1+), and it
-# keeps dialog latency down and leaves the token budget for the visible reply.
+# reasoning model accepts ("minimal" is gpt-5-only; "none" is accepted by some
+# models only — gpt-5.1 yes, gpt-6.1-sol no), and it keeps dialog latency down
+# and leaves the token budget for the visible reply.
 _REASONING_EFFORT = "low"
+
+# On /v1/chat/completions the gpt-6 family rejects function tools combined
+# with any reasoning effort (an omitted one included) — only "none" works,
+# and only on models that accept "none" (gpt-6-luna yes, gpt-6.1-sol no).
+# Tool rounds for this family therefore send "none"; a model that 400s on
+# that is recorded below and gets its tool rounds without tools from then
+# on (replies keep working; tools need the /v1/responses API there).
+_TOOLS_NEED_NO_REASONING_RE = re.compile(r"^(?:[\w.-]+/)?gpt-6", re.IGNORECASE)
+_tools_unsupported_models: set = set()
 
 # Hidden reasoning tokens count against the completion budget, so a tiny
 # budget (the router's 16 tokens) is spent entirely on reasoning and the
@@ -144,6 +154,43 @@ async def _iter_completion_chunks(payload: dict) -> AsyncGenerator[dict, None]:
                 except (json.JSONDecodeError, KeyError, IndexError) as exc:
                     logger.warning("Malformed SSE chunk from LLM: %s", exc)
                     continue
+
+
+async def _iter_tool_round_chunks(payload: dict) -> AsyncGenerator[dict, None]:
+    """_iter_completion_chunks() for a tool-loop round, shaped for gpt-6 tools.
+
+    For a gpt-6 model offered tools, sends reasoning_effort "none" (the
+    only value its chat/completions endpoint allows with tools). If the
+    model 400s on that, it is remembered as tool-incapable and the round
+    is re-sent without tools — the HTTP error is raised before any chunk
+    is yielded, so nothing has reached the caller yet.
+    """
+    model = (payload.get("model") or "").strip()
+    if "tools" not in payload or not _TOOLS_NEED_NO_REASONING_RE.match(model):
+        async for choice in _iter_completion_chunks(payload):
+            yield choice
+        return
+
+    if model.lower() not in _tools_unsupported_models:
+        try:
+            async for choice in _iter_completion_chunks(
+                {**payload, "reasoning_effort": "none"}
+            ):
+                yield choice
+            return
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+        _tools_unsupported_models.add(model.lower())
+        logger.warning(
+            "LLM model '%s' cannot use tools on /v1/chat/completions; "
+            "continuing without tools (persona memories and MCP tools are "
+            "unavailable with this model)", model,
+        )
+
+    without_tools = {k: v for k, v in payload.items() if k != "tools"}
+    async for choice in _iter_completion_chunks(without_tools):
+        yield choice
 
 
 async def stream_chat(
@@ -315,7 +362,7 @@ async def stream_chat_with_tools(
         content_parts: List[str] = []
         pending_tool_calls: Dict[int, dict] = {}
         finish_reason: Optional[str] = None
-        async for choice in _iter_completion_chunks(payload):
+        async for choice in _iter_tool_round_chunks(payload):
             delta = choice.get("delta") or {}
             token = delta.get("content") or ""
             if token:

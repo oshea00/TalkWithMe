@@ -182,6 +182,12 @@ class TestChatCompletion:
 # Reasoning models (o-series, gpt-5 family) — different sampling params
 # ---------------------------------------------------------------------------
 
+_DUMMY_TOOL = {
+    "type": "function",
+    "function": {"name": "dummy", "description": "d", "parameters": {"type": "object", "properties": {}}},
+}
+
+
 def _use_model(monkeypatch, model: str):
     monkeypatch.setattr(
         app_config,
@@ -197,6 +203,7 @@ class TestReasoningModels:
     @pytest.mark.parametrize("model", [
         "gpt-5-mini", "gpt-5", "GPT-5.1", "gpt-5-nano-2025-08-07",
         "o1", "o3-mini", "o4-mini", "openai/gpt-5-mini",
+        "gpt-6-luna", "gpt-6.1-sol", "openai/gpt-6-luna",
     ])
     def test_reasoning_models_detected(self, model):
         assert llm.is_reasoning_model(model)
@@ -221,6 +228,21 @@ class TestReasoningModels:
         assert "max_tokens" not in payload
         assert "temperature" not in payload
 
+    @pytest.mark.parametrize("model", ["gpt-6-luna", "GPT-6", "gpt-6.1-sol", "openai/gpt-6-luna"])
+    def test_gpt6_sends_reasoning_effort_low(self, monkeypatch, model):
+        # gpt-6.1-sol 400s on reasoning_effort "none"; "low" is accepted by every reasoning model.
+        _use_model(monkeypatch, model)
+        client = FakeLLMClient([token_line("x"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat([{"role": "user", "content": "hi"}]))
+
+        payload = client.payloads[0]
+        assert payload["reasoning_effort"] == "low"
+        assert "max_completion_tokens" in payload
+        assert "max_tokens" not in payload
+        assert "temperature" not in payload
+
     def test_tool_loop_payload_for_reasoning_model(self, monkeypatch, tmp_path):
         _use_model(monkeypatch, "gpt-5-mini")
         client = FakeLLMClient([token_line("x"), finish_line("stop"), "data: [DONE]"])
@@ -234,6 +256,101 @@ class TestReasoningModels:
         assert "max_completion_tokens" in payload
         assert "max_tokens" not in payload
         assert "temperature" not in payload
+
+    def test_tool_round_for_gpt6_sends_reasoning_effort_none(self, monkeypatch, tmp_path):
+        # gpt-6 on chat/completions 400s on tools + any reasoning effort but "none".
+        _use_model(monkeypatch, "gpt-6-luna")
+        client = FakeLLMClient([token_line("x"), finish_line("stop"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat_with_tools(
+            [{"role": "user", "content": "hi"}], [_DUMMY_TOOL], _tool_persona(tmp_path),
+        ))
+
+        payload = client.payloads[0]
+        assert payload["tools"] == [_DUMMY_TOOL]
+        assert payload["reasoning_effort"] == "none"
+
+    @pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6.1-sol", "gpt-5-mini", "o4-mini"])
+    def test_tool_loop_without_tools_sends_reasoning_effort_low(self, monkeypatch, tmp_path, model):
+        # Memories off + no MCP servers = an empty tool list: no "tools" field,
+        # so every reasoning model (gpt-6 included) gets the default "low".
+        _use_model(monkeypatch, model)
+        client = FakeLLMClient([token_line("x"), finish_line("stop"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat_with_tools(
+            [{"role": "user", "content": "hi"}], [], _tool_persona(tmp_path),
+        ))
+
+        assert len(client.payloads) == 1
+        assert "tools" not in client.payloads[0]
+        assert client.payloads[0]["reasoning_effort"] == "low"
+
+    def test_tool_round_for_gpt5_keeps_reasoning_effort_low(self, monkeypatch, tmp_path):
+        _use_model(monkeypatch, "gpt-5-mini")
+        client = FakeLLMClient([token_line("x"), finish_line("stop"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+
+        _collect(llm.stream_chat_with_tools(
+            [{"role": "user", "content": "hi"}], [_DUMMY_TOOL], _tool_persona(tmp_path),
+        ))
+
+        payload = client.payloads[0]
+        assert payload["tools"] == [_DUMMY_TOOL]
+        assert payload["reasoning_effort"] == "low"
+
+    def test_gpt6_model_rejecting_none_falls_back_to_no_tools(self, monkeypatch, tmp_path, caplog):
+        # gpt-6.1-sol rejects "none", and every other effort with tools: the
+        # round is re-sent without tools, and the model is remembered.
+        _use_model(monkeypatch, "gpt-6.1-sol")
+        body = "{\"error\": {\"message\": \"'reasoning_effort' does not support 'none'\"}}"
+
+        class RejectsNone(FakeLLMClient):
+            def stream(self, method, url, json=None):
+                self.payloads.append(json)
+                if json.get("reasoning_effort") == "none":
+                    return FakeStreamResponse([], status_code=400, text=body)
+                return FakeStreamResponse(self.lines)
+
+        client = RejectsNone([token_line("hello"), finish_line("stop"), "data: [DONE]"])
+        patch_llm_client(monkeypatch, client)
+        persona = _tool_persona(tmp_path)
+
+        with caplog.at_level(logging.WARNING, logger="app.services.llm"):
+            events = _collect(llm.stream_chat_with_tools(
+                [{"role": "user", "content": "hi"}], [_DUMMY_TOOL], persona,
+            ))
+
+        assert [e["token"] for e in events if e["type"] == "token"] == ["hello"]
+        assert len(client.payloads) == 2
+        assert "tools" not in client.payloads[1]
+        assert client.payloads[1]["reasoning_effort"] == "low"
+        assert "cannot use tools" in caplog.text
+
+        # Later replies skip the doomed request entirely.
+        _collect(llm.stream_chat_with_tools(
+            [{"role": "user", "content": "hi"}], [_DUMMY_TOOL], persona,
+        ))
+        assert len(client.payloads) == 3
+        assert "tools" not in client.payloads[2]
+
+    def test_gpt6_tool_round_server_error_is_not_swallowed(self, monkeypatch, tmp_path):
+        _use_model(monkeypatch, "gpt-6-luna")
+
+        class Failing(FakeLLMClient):
+            def stream(self, method, url, json=None):
+                self.payloads.append(json)
+                return FakeStreamResponse([], status_code=500)
+
+        client = Failing([])
+        patch_llm_client(monkeypatch, client)
+        with pytest.raises(Exception, match="500"):
+            _collect(llm.stream_chat_with_tools(
+                [{"role": "user", "content": "hi"}], [_DUMMY_TOOL], _tool_persona(tmp_path),
+            ))
+        assert len(client.payloads) == 1
+        assert not llm._tools_unsupported_models
 
     def test_router_call_for_reasoning_model_gets_room_to_reason(self, monkeypatch):
         # A 16-token budget is consumed entirely by hidden reasoning and the
